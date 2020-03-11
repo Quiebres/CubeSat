@@ -1,0 +1,268 @@
+---
+title: "Análisis de Sentimientos Cubesat"
+author: "Odalis Reyes e Ivan Maldonado"
+date: "10/03/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Librerías a utilizar
+```{r cars}
+# Instalación de paquetes neuevos en caso no estén descargados
+if(!require(twitteR)) {install.packages("twitteR")}
+if(!require(ROAuth)) {install.packages("ROAuth")}
+if(!require(readr)) {install.packages("readr")}
+if(!require(tm)) {install.packages("tm")}
+if(!require(wordcloud)) {install.packages("wordcloud")}
+if(!require(ggplot2)) {install.packages("ggplot2")}
+if(!require(base64enc)) {install.packages("base64enc")}
+if(!require(openssl)) {install.packages("openssl")}
+if(!require(httpuv)) {install.packages("httpuv")}
+if(!require(httr)) {install.packages("httr")}
+if(!require(qdapRegex)) {install.packages("qdapRegex")}
+
+# Se mandan a traer las librerías 
+library(qdapRegex)
+library("twitteR") # Análisis de Twitter
+library("ROAuth") # Accese al API
+library("readr") # Lee los archivos 
+library("tm")  # Tranformaciones para el TM
+library("wordcloud") # Nube de palabras
+library(ggplot2) # Gráficos
+library(base64enc)
+library(openssl)
+library(httpuv)
+library(httr)
+library("SentimentAnalysis") 
+library("SnowballC") # Sentiment analysis
+library(tidytext) # Otro análisis de sentimientos.
+library("syuzhet")
+library(dplyr) 
+library(plyr)
+```
+
+
+# Obteniendo el acceso a Twitter
+Para la realización de este laboratorio se decidió utilizar Twitter, para ello se creó una APP desde la página para developers de Twitter, donde se debía de obtener la autorización de Twitter para poder tener una APP de developer. Luego, con la autorización fue posible obtener el API y el token para poder obtener los tweets.
+
+```{r pressure, echo=FALSE}
+options(httr_oauth_cache=T)
+my.consumer.key <- "MqlOqVvLnJb5o1xGs0o5Hu23Z"
+my.consumer.secret <- "eNM9IVRcuRNihtJK9glzMOoebFhxrm25z5IpUjGdffrWAz6nQi"
+my.access.token <- "225578097-aDwImEKkCOhVRF6aWwz4KDRsF7VuGi4qn5df7kdk"
+my.access.token.secret <- "5dv2mv7v059gIlMxbKfHpvXtqo5WpwrjfJI4lJXXmFi86"
+my_oauth <- setup_twitter_oauth(consumer_key = my.consumer.key, 
+                                consumer_secret = my.consumer.secret, 
+                                access_token = my.access.token, 
+                                access_secret = my.access.token.secret)
+save(my_oauth, file = "my_oauth.Rdata")
+```
+
+# Obtención de los datos para el Hashtag TráficoGT
+Se utilizaron las librerías *TwitterR* y *ROAuth* para la obtención de los datos y análisis. Se tomó la decisión de utilizar el $\#TraficoGt$, con ayuda de las librerias importadas se buscaron los tweets y se creó un data frame a partir de los resultados obtenidos. 
+```{r}
+search.string <- "#Quetzal1"
+result.term <- searchTwitter(search.string, lang = "es", n = 1000)
+head(result.term)
+
+#Se almacena todo en un Data Frame
+```
+```{r}
+dataTweets<- twListToDF(result.term)
+write.csv(dataTweets, "tweets.csv")
+tweets.text <- sapply(result.term, function(x) x$getText())
+```
+
+
+# Limpieza y preprocesamiento
+Se comenzó eliminando la palabra "rt" debido a que se observó que los usuarios realizaban "rt" de tipo comentario. Ademas, cuando se hace esto aparece el nombre del usuario al cual rwtweetearon, entonces se prosiguió a eliminar también los usuarios. Acontinuación se eliminaron los hastags debido a que era lo que estabamos utilizando para filtrar los tweets que teníamos. Por último se realizó una limpieza normal de texto. Cabe mencionar que se eliminaron las tildes para evitar palabras repetidas escritas de diferente manera, dado que algunas personas escriben con tildes y otras no.
+```{r}
+# Quitar (“rt”)
+tweets.text <- gsub("RT", "", tweets.text)
+# Quitar @Usuario
+tweets.text <- gsub("@\\w+", "", tweets.text)
+# Quitar #Hashtag
+tweets.text <- gsub("#\\S+", "", tweets.text)
+# Quitar puntuaciones
+tweets.text <- gsub("[[:punct:]]", "", tweets.text)
+# Quitar links
+tweets.text <- gsub("http\\w+", "", tweets.text)
+# Quitar tabs
+tweets.text <- gsub("[ |\t]{2,}", "", tweets.text)
+# Quitar espacios en blanco del principio
+tweets.text <- gsub("^ ", "", tweets.text)
+# Quitar espacios en blanco del final
+tweets.text <- gsub(" $", "", tweets.text)
+# Quitar emojis
+tweets.text <- gsub('\\p{So}|\\p{Cn}', "", tweets.text, perl = TRUE)
+# Convertir a minúsculas
+tweets.text <- tolower(tweets.text)
+# Cambio de tildes
+tweets.text <- gsub("á", "a", tweets.text)
+tweets.text <- gsub("é", "e", tweets.text)
+tweets.text <- gsub("í", "i", tweets.text)
+tweets.text <- gsub("ó", "o", tweets.text)
+tweets.text <- gsub("ú", "u", tweets.text)
+```
+Una vez limpio el texto, se prosiguió a realizar el corpus. Cabe mencionar que cuando se creó el corpus se eliminaron las stopwords en español.
+```{r}
+#create corpus
+#clean up by removing stop words
+tweets.corpus <- Corpus(VectorSource(tweets.text))
+tweets.corpus <- tm_map(tweets.corpus, content_transformer(removeNumbers))
+tweets.corpus <- tm_map(tweets.corpus, function(x) removeWords(x,stopwords("spanish")))
+```
+
+
+# Análisis exploratorio
+
+## Nube de palabras
+En el worldcloud podemos observar en forma de nube las palabras más repetidas. Se encotró que la palabra con más frecuencia fue "ruta" y "zona". Por otro lado, se obtuvo un error que indicaba que habían varias palabras que no se pudieron plottear, entonces no se sabe que tanto se repitieron en los textos. Es por eso que se realizó un histograma de frecuencias de palabras, donde se obtuvieron la palabras que más se repetían y las que menos se repetían.
+```{r}
+#generate wordcloud
+wordcloud(tweets.corpus,min.freq = 2, scale=c(3,0.5), colors=brewer.pal(8, "Dark2"),  
+          random.color= TRUE, random.order = FALSE, max.words = 150)
+```
+
+## Histograma de palabras con más frecuencia
+Para el histograma de palabras con más frecuencia, se plottearon la palabras que tenían una frecuencia mayor a 50. Como se mencionó en los comentarios de worlcloud, hubieron palabras que no se pudieron plottear. Sin embargo, en este histograma se puede observar una de ellas, "atlántico". Cabe mencionar que la palabra atlántico hace referencia a ruta el atlántico.
+```{r}
+dtm <- DocumentTermMatrix(tweets.corpus)
+
+freq <- colSums(as.matrix(dtm))
+
+wfTweet <- data.frame(word = names(freq), freq = freq)
+head(wfTweet)
+
+
+HistoR <- ggplot(subset(wfTweet, freq>50), aes(x = reorder(word, -freq), y = freq)) +
+          geom_bar(stat = "identity") + ggtitle("Palabras más frecuentes") +
+          theme(axis.text.x=element_text(angle=45, hjust=1))
+HistoR
+
+```
+
+## Histograma de palabras con menos frecuencia
+En el histograma con menos frecuencia encontramos palabras como "pincha", "cuota" y "mezcla".
+```{r}
+freqWords <- apply(dtm,2,sum)
+freqData <- data.frame(word=names(freqWords), frecuency=as.numeric(freqWords), 
+                       stringsAsFactors = FALSE)
+freqData<- freqData[order(freqData$frecuency, decreasing=TRUE), ]
+barplot(tail(freqData$frecuency, n = 20), 
+        names.arg = tail(freqData$word, n = 20), 
+        main = "Palabras menos frecuentes", ylab = "Freq")
+
+```
+
+## Asociasión de palabras
+
+
+Según las palabras más frecuentes, se encontró la palabra 'zona', vamos a indagar que palabras se encuentran asociadas a esta con el fin de poder determinar algún tipo de relación.
+
+```{r}
+
+findAssocs(dtm, 'uvg', 0.2)
+```
+
+```{r}
+
+findAssocs(dtm, 'satelite', 0.2)
+
+```
+
+Vemos que la palabra "avenida" se relaciona  con advertencias o incidentes tipo "volcado", "precaucion" y lugares como "montufar", "verbena", "chinautla" y nos llama la atención la palabra "manifestaciongt". Por otro lado se menciona la palabra "bolivar" que hace referencia a la avenida Bolivar, una de las rutas con más tráfico en Guatemala.
+
+```{r}
+findAssocs(dtm, 'mierda', 0.2)
+```
+
+También decidimos analizar la palabra "ruta", la palabra que presenta mayor correlación es la de "atlántico", lo cual nos lleva a cuestionarnos: ¿acaso se realizan mayor cantidad de reportes de tránsito sobre la Ruta al Atlántico?
+
+Así también vemos que se relaciona bastante con otras carreteras como la Interamericanta, Pacífico y Salvador. Otro hecho que nos llama la atención es su relación con las palabras "bloquean", "entrada" y "manifestantes" lo cual nos lleva a inferir que también se reportan con mayor frecuencia los bloqueos que realizan los manifestantes.
+
+
+## Analizando los retweets
+ Para ello, se creó un data frame que contuviera solamente el texto y la frecuencia de Retweets que obtuvo, a partir de el con la función *order* se colocaron en orden descendente y se mostrarán los primeros 10.
+```{r}
+txandrt <- dataTweets[c(1,12)]
+rt<-txandrt[order(txandrt$retweetCount, decreasing = TRUE),] 
+rtMost <-rt[!duplicated(rt),]
+head(rtMost,10)
+```
+
+Observamos que la mayoría son retweets de ConsejoMontejo y que contienen la palabra "UrgenteGt"
+
+
+## Análisis de sentimientos
+Con el fin de determinar la razón o la actitud de los usuarios que publican tweets usando el hashtag #TraficoGT, se decidió realizar un análisis de sentimientos y así determinar si la mayoría de tweets son positivos o negativos. En este caso, vemos que la mayoría de tweets muestran confianza/seguridad y una segunda parte muestra negativismo. Esto posiblemente se debe a que la mayoría de guatemaltecos saben con certeza que en ciertas áreas de la ciudad o del país hay bastante embotellamiento (por lo que muestran seguridad en sus tweets); por otra parte, el negativismo se debe a que nadie le gusta el tráfico y usualmente se expresa en esta red social para desahogar su frustramiento. 
+```{r}
+senti.tweets <-get_nrc_sentiment(as.vector(dataTweets$text))
+# Total de cada sentimiento
+Sentimentscores <-data.frame(colSums(senti.tweets[,]))
+
+names(Sentimentscores)<-"Puntaje"
+Sentimentscores <-cbind("Sentimiento"=rownames(Sentimentscores),Sentimentscores)
+rownames(Sentimentscores)<-NULL
+
+# Se grafica los puntajes de cada sentimiento
+ggplot(data=Sentimentscores,aes(x=Sentimiento,y=Puntaje))+geom_bar(aes(fill=Sentimiento),stat = "identity")+
+  theme(legend.position="none")+
+  xlab("Sentimiento")+ylab("Puntaje")+ggtitle("Sentimientos de las personas con el hashtag #Quetzal1")
+```
+
+Ahora bien, se analizan cuáles son los comentarios positivos, negativos y neutros dentro de nuestra data de tweets. Se observa lo siguiente: 
+
+* *Tweets positivos*: Se habla la alegría que hay en las nuevas rutas, mensajes de precaución, piden ayuda para que los policías revisen pasos, rutas o desniveles en las carreteras. 
+
+* *Tweets negativos*: Se habla acerca de accidentes automovilísticos, fallas mecánicas que obstruyen el paso en las carreteras.  
+
+* *Tweets neutros*: No se observa nada relevante, solo alertas o avisos, tales como el tráfico usual de cada quincena y autos que se suben a las banquetas.
+
+```{r}
+# Valor de los sentimientos
+valor <- get_sentiment(dataTweets$text)
+
+# Asignando los valores de sentimientos
+max <- dataTweets$text[valor == max(valor)]
+min <- dataTweets$text[valor == min(valor)]
+```
+### Tweets positivos
+```{r}
+positivo <- dataTweets$text[valor>0]
+tail(positivo)
+```
+
+### Tweets negativos
+```{r}
+negativo <- dataTweets$text[valor<0]
+head(negativo)
+```
+
+### Tweets neutros
+```{r}
+neutral <- dataTweets$text[valor==0]
+tail(neutral,2)
+```
+
+
+# Conclusiones
+Según el análisis realizado a los tweets del tráfico en Guatemala, se llegaron a las siguientes conclusiones: 
+
+* Como Ruta al Atlántico es una de las palabras con mucha frencuencia, se puede decir que es una de las rutas con más tráfico en Guatemala. 
+
+* El segundo sentimiento más alto dentro de los tweets realizados, se muestra un comportamiento negativo ya que se cree que las personas usan este medio para mostrar las molestias acerca del embotellamiento capitalino. 
+
+* La mayoría de retweets son de ConsejoMontejo, cuyos tweets contienen la palabra UrgenteGT. 
+
+* La mayoría de tweets negativos informan accidentes o vehículos en las carreteras, mostrando molestia y desesperación.
+
+* Nos llamó la atención que una de las palabras asociadas a "avenida" era "Bolívar", lo cual muestra coherencia, ya que es una de las rutas con más embotellamiento, al igual que la Atanasio Tzul. 
+
+* Las rutas siempre son bloqueadas por manifestaciones. 
+
